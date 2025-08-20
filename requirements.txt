@@ -1,6 +1,9 @@
-streamlit
-torch
-torchvision
-pandas
-numpy
-Pillow
+streamlit==1.30.0
+torch==2.1.0
+torchvision==0.16.1
+pandas==2.1.0
+numpy==1.26.0
+Pillow==10.0.1
+requests==2.31.0
+
+
