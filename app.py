@@ -9,14 +9,21 @@ import gdown
 
 # ===== CONFIG =====
 MODEL_PATH = "pokemon_price_predictor_augmented_finetuned.pt"
-MODEL_URL = "https://drive.google.com/uc?export=download&id=1Edr3dTQjKUZxSlFMmT_2YZ1toHpYto-2"
+FILE_ID = "1Edr3dTQjKUZxSlFMmT_2YZ1toHpYto-2"
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # ===== HELPER FUNCTION TO DOWNLOAD MODEL =====
-def download_model(url, save_path):
+def download_model(file_id, save_path):
+    if os.path.exists(save_path):
+        st.info("Model already exists locally.")
+        return
     st.info("Downloading model, please wait...")
+    url = f"https://drive.google.com/uc?id={file_id}"
     gdown.download(url, save_path, quiet=False)
-    st.success("Model downloaded!")
+    if os.path.exists(save_path):
+        st.success("Model downloaded successfully!")
+    else:
+        st.error("Model download failed. Please check the URL or file ID.")
 
 # ===== DEFINE MODEL =====
 class PricePredictor(nn.Module):
@@ -37,14 +44,18 @@ class PricePredictor(nn.Module):
         combined = torch.cat([img_feat, rarity], dim=1)
         return self.fc(combined)
 
-# ===== CHECK AND LOAD MODEL =====
-if not os.path.exists(MODEL_PATH):
-    download_model(MODEL_URL, MODEL_PATH)
+# ===== DOWNLOAD AND LOAD MODEL =====
+download_model(FILE_ID, MODEL_PATH)
 
 RARITY_LIST = ["Common", "Uncommon", "Rare", "Ultra Rare", "Secret Rare"]
 model = PricePredictor(rarity_size=len(RARITY_LIST)).to(DEVICE)
-model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
-model.eval()
+
+try:
+    model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
+    model.eval()
+except Exception as e:
+    st.error(f"Error loading model: {e}")
+    st.stop()
 
 # ===== STREAMLIT APP =====
 st.title("Pokémon Card Price Predictor")
@@ -79,6 +90,8 @@ if uploaded_file:
     st.success(f"Predicted Price: ${price_pred:.2f}")
     st.write(f"Card Name: {card_name}")
     st.write(f"Rarity: {rarity}")
+
+
 
 
 
