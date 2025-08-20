@@ -5,25 +5,21 @@ import torchvision.transforms as transforms
 from PIL import Image
 import numpy as np
 import os
-import gdown
+import requests
 
 # ===== CONFIG =====
 MODEL_PATH = "pokemon_price_predictor_augmented_finetuned.pt"
-FILE_ID = "1Edr3dTQjKUZxSlFMmT_2YZ1toHpYto-2"
+MODEL_URL = "https://drive.google.com/uc?export=download&id=1Edr3dTQjKUZxSlFMmT_2YZ1toHpYto-2"
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # ===== HELPER FUNCTION TO DOWNLOAD MODEL =====
-def download_model(file_id, save_path):
-    if os.path.exists(save_path):
-        st.info("Model already exists locally.")
-        return
+def download_model(url, save_path):
     st.info("Downloading model, please wait...")
-    url = f"https://drive.google.com/uc?id={file_id}"
-    gdown.download(url, save_path, quiet=False)
-    if os.path.exists(save_path):
-        st.success("Model downloaded successfully!")
-    else:
-        st.error("Model download failed. Please check the URL or file ID.")
+    response = requests.get(url, stream=True)
+    with open(save_path, "wb") as f:
+        for chunk in response.iter_content(chunk_size=8192):
+            f.write(chunk)
+    st.success("Model downloaded!")
 
 # ===== DEFINE MODEL =====
 class PricePredictor(nn.Module):
@@ -44,14 +40,16 @@ class PricePredictor(nn.Module):
         combined = torch.cat([img_feat, rarity], dim=1)
         return self.fc(combined)
 
-# ===== DOWNLOAD AND LOAD MODEL =====
-download_model(FILE_ID, MODEL_PATH)
+# ===== CHECK MODEL =====
+if not os.path.exists(MODEL_PATH):
+    download_model(MODEL_URL, MODEL_PATH)
 
+# ===== LOAD MODEL WITH NEW PYTORCH 2.6 ARG =====
 RARITY_LIST = ["Common", "Uncommon", "Rare", "Ultra Rare", "Secret Rare"]
 model = PricePredictor(rarity_size=len(RARITY_LIST)).to(DEVICE)
 
 try:
-    model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
+    model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE, weights_only=False))
     model.eval()
 except Exception as e:
     st.error(f"Error loading model: {e}")
@@ -90,7 +88,6 @@ if uploaded_file:
     st.success(f"Predicted Price: ${price_pred:.2f}")
     st.write(f"Card Name: {card_name}")
     st.write(f"Rarity: {rarity}")
-
 
 
 
