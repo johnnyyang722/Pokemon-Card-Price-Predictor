@@ -5,95 +5,82 @@ import torchvision.transforms as transforms
 from PIL import Image
 import numpy as np
 import os
+import requests
 
-# ==============================
-# Load trained model
-# ==============================
-from model_definition import PokemonPricePredictor  # Import your model class
+# ===== CONFIG =====
+MODEL_PATH = "pokemon_price_predictor_augmented_finetuned.pt"
+MODEL_URL = "https://drive.google.com/uc?export=download&id=1Edr3dTQjKUZxSlFMmT_2YZ1toHpYto-2"
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# ===== HELPER FUNCTION TO DOWNLOAD MODEL =====
+def download_model(url, save_path):
+    st.info("Downloading model, please wait...")
+    response = requests.get(url, stream=True)
+    with open(save_path, "wb") as f:
+        for chunk in response.iter_content(chunk_size=8192):
+            f.write(chunk)
+    st.success("Model downloaded!")
 
-# Initialize model (make sure input_dim matches your rarity encoding size)
-model = PokemonPricePredictor(input_dim=7)  # adjust if your rarity one-hot is different
-model.load_state_dict(torch.load("pokemon_price_predictor_augmented_finetuned.pt", map_location=device))
-model.to(device)
+# ===== DEFINE MODEL =====
+class PricePredictor(nn.Module):
+    def __init__(self, rarity_size):
+        super().__init__()
+        from torchvision import models
+        self.cnn = models.resnet18(weights=models.ResNet18_Weights.DEFAULT)
+        self.cnn.fc = nn.Identity()
+        cnn_out = 512
+        self.fc = nn.Sequential(
+            nn.Linear(cnn_out + rarity_size, 256),
+            nn.ReLU(),
+            nn.Linear(256, 1)
+        )
+
+    def forward(self, image, rarity):
+        img_feat = self.cnn(image)
+        combined = torch.cat([img_feat, rarity], dim=1)
+        return self.fc(combined)
+
+# ===== CHECK MODEL =====
+if not os.path.exists(MODEL_PATH):
+    download_model(MODEL_URL, MODEL_PATH)
+
+# ===== LOAD MODEL =====
+RARITY_LIST = ["Common", "Uncommon", "Rare", "Ultra Rare", "Secret Rare"]  # update based on your dataset
+model = PricePredictor(rarity_size=len(RARITY_LIST)).to(DEVICE)
+model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
 model.eval()
 
-# ==============================
-# Rarity mapping
-# ==============================
-rarity_map = {
-    "Common": 0,
-    "Uncommon": 1,
-    "Rare": 2,
-    "Rare Holo": 3,
-    "Rare Ultra": 4,
-    "Rare Secret": 5,
-    "Promo": 6
-}
-idx_to_rarity = {v: k for k, v in rarity_map.items()}
-
-# ==============================
-# Image preprocessing
-# ==============================
-transform = transforms.Compose([
-    transforms.Resize((224, 224)),
-    transforms.ToTensor(),
-    transforms.Normalize([0.485, 0.456, 0.406],
-                         [0.229, 0.224, 0.225])
-])
-
-def preprocess_image(image_file):
-    image = Image.open(image_file).convert("RGB")
-    return transform(image).unsqueeze(0)  # add batch dimension
-
-
-# ==============================
-# Prediction function
-# ==============================
-def predict_price(image_tensor, rarity_str):
-    rarity_idx = rarity_map[rarity_str]
-    rarity_tensor = torch.tensor([rarity_idx], dtype=torch.long).to(device)
-
-    with torch.no_grad():
-        log_pred = model(image_tensor.to(device), rarity_tensor).item()
-        pred_price = np.expm1(log_pred)  # reverse log1p transform
-    return pred_price
-
-
-# ==============================
-# Streamlit UI
-# ==============================
+# ===== STREAMLIT APP =====
 st.title("Pokémon Card Price Predictor")
 
-st.write("Upload a Pokémon card image, select rarity, and enter the card name to predict market price.")
+card_name = st.text_input("Enter card name:")
+rarity = st.selectbox("Select card rarity:", RARITY_LIST)
+uploaded_file = st.file_uploader("Upload card image", type=["jpg", "jpeg", "png"])
 
-# Card name input
-card_name_input = st.text_input("Enter Card Name (optional):")
+if uploaded_file:
+    image = Image.open(uploaded_file).convert("RGB")
+    st.image(image, caption="Uploaded Card", use_column_width=True)
 
-# Rarity dropdown
-rarity_choice = st.selectbox("Select Rarity:", list(rarity_map.keys()))
+    # ===== IMAGE PREPROCESSING =====
+    transform = transforms.Compose([
+        transforms.Resize((224, 224)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                             std=[0.229, 0.224, 0.225])
+    ])
+    image_tensor = transform(image).unsqueeze(0).to(DEVICE)
 
-# Image upload
-uploaded_file = st.file_uploader("Upload a card image:", type=["jpg", "jpeg", "png"])
+    # ===== RARITY TO TENSOR =====
+    rarity_tensor = torch.zeros(1, len(RARITY_LIST)).to(DEVICE)
+    rarity_idx = RARITY_LIST.index(rarity)
+    rarity_tensor[0, rarity_idx] = 1.0
 
-if uploaded_file is not None:
-    st.image(uploaded_file, caption="Uploaded Card Image", use_column_width=True)
+    # ===== PREDICTION =====
+    with torch.no_grad():
+        log_pred = model(image_tensor, rarity_tensor).item()
+        price_pred = np.expm1(log_pred)  # reverse log transform
 
-    # If user left card name blank, default to filename
-    if not card_name_input:
-        card_name = os.path.splitext(uploaded_file.name)[0]
-    else:
-        card_name = card_name_input
+    st.success(f"Predicted Price: ${price_pred:.2f}")
+    st.write(f"Card Name: {card_name}")
+    st.write(f"Rarity: {rarity}")
 
-    # Preprocess image
-    image_tensor = preprocess_image(uploaded_file)
-
-    # Predict price
-    predicted_price = predict_price(image_tensor, rarity_choice)
-
-    # Display results
-    st.subheader("Prediction Results")
-    st.write(f"**Card Name:** {card_name}")
-    st.write(f"**Rarity:** {rarity_choice}")
-    st.write(f"**Predicted Price:** ${predicted_price:.2f}")
