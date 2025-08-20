@@ -2,6 +2,7 @@ import streamlit as st
 import torch
 import torch.nn as nn
 import torchvision.transforms as transforms
+from torchvision import models
 from PIL import Image
 import numpy as np
 import os
@@ -10,7 +11,9 @@ import requests
 # ===== CONFIG =====
 MODEL_PATH = "pokemon_price_predictor_augmented_finetuned.pt"
 MODEL_URL = "https://drive.google.com/uc?export=download&id=1Edr3dTQjKUZxSlFMmT_2YZ1toHpYto-2"
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+DEVICE = torch.device("cpu")  # Streamlit Cloud free tier only supports CPU
+
+RARITY_LIST = ["Common", "Uncommon", "Rare", "Ultra Rare", "Secret Rare"]
 
 # ===== HELPER FUNCTION TO DOWNLOAD MODEL =====
 def download_model(url, save_path):
@@ -21,11 +24,10 @@ def download_model(url, save_path):
             f.write(chunk)
     st.success("Model downloaded!")
 
-# ===== DEFINE MODEL =====
+# ===== MODEL DEFINITION =====
 class PricePredictor(nn.Module):
     def __init__(self, rarity_size):
         super().__init__()
-        from torchvision import models
         self.cnn = models.resnet18(weights=models.ResNet18_Weights.DEFAULT)
         self.cnn.fc = nn.Identity()
         cnn_out = 512
@@ -40,12 +42,10 @@ class PricePredictor(nn.Module):
         combined = torch.cat([img_feat, rarity], dim=1)
         return self.fc(combined)
 
-# ===== CHECK MODEL =====
+# ===== LOAD MODEL =====
 if not os.path.exists(MODEL_PATH):
     download_model(MODEL_URL, MODEL_PATH)
 
-# ===== LOAD MODEL =====
-RARITY_LIST = ["Common", "Uncommon", "Rare", "Ultra Rare", "Secret Rare"]  # update based on your dataset
 model = PricePredictor(rarity_size=len(RARITY_LIST)).to(DEVICE)
 model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
 model.eval()
@@ -83,4 +83,6 @@ if uploaded_file:
     st.success(f"Predicted Price: ${price_pred:.2f}")
     st.write(f"Card Name: {card_name}")
     st.write(f"Rarity: {rarity}")
+
+
 
